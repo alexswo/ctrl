@@ -64,7 +64,7 @@ ad_proc -public ctrl_ce::make_access_token {
                 "alg" "\"RS256\"" \
 		    "typ" "\"JWT\""]
 
-    set header [base64_url_encode $header]
+    set header [ctrl_ce::base64_url_encode -input $header]
 
     # Token is accessible for maximum of 1 Hour.                                                                            
     set claims [::json::write object \
@@ -73,7 +73,7 @@ ad_proc -public ctrl_ce::make_access_token {
                 "aud" "\"https://accounts.google.com/o/oauth2/token\"" \
 		    "exp" "\"[expr {[clock seconds] + 3600}]\"" \
 		    "iat" "\"[clock seconds]\"" ]
-    set claims [base64_url_encode $claims]
+    set claims [ctrl_ce::base64_url_encode -input $claims]
 
     set signature "$header.$claims"
 
@@ -83,7 +83,9 @@ ad_proc -public ctrl_ce::make_access_token {
     close $fp
 
     set key [::pki::pkcs::parse_key $keydata]
-    set sig [base64_url_encode [::pki::sign $signature $key sha256]]
+
+    set sig [ctrl_ce::base64_url_encode -input [::pki::sign $signature $key sha256]]
+
     set final "$signature.$sig"
 
     set postdata [::http::formatQuery grant_type "urn:ietf:params:oauth:grant-type:jwt-bearer" assertion $final]
@@ -174,3 +176,11 @@ ad_proc -public ctrl_ce::save_events {
 
     return $removeRightBrace
 } 
+
+ad_proc -public ctrl_ce::base64_url_encode {
+    {-input:required}
+} {
+    Base 64 URL encoding scheme. 
+} {
+    return [string map {\n "" "=" "" + - / _} [::base64::encode $input]]  
+}
