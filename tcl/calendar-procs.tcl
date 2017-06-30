@@ -14,7 +14,7 @@ ad_library {
 
 
 
-namespace eval ctrl_ce {}
+namespace eval ars::events {}
 
 ad_proc -public ctrl_ce::new { 
     {-event_id:required}
@@ -142,6 +142,19 @@ ad_proc -public ctrl_ce::get_events_cache {
 } {
     set events [util_memoize [list "ctrl_ce::get_events" $calendar_id] 900]
     return $events
+}
+
+ad_proc -public ars::events::nothing {
+} {
+} {
+    return "hello"
+}
+
+ad_proc -public ctrl_ce::get_events_from_db {
+} {
+    Just getting the stored information from db
+} {
+    return [db_list_of_lists ce_get {}]
 }
 
 ad_proc -public ctrl_ce::save_events {
