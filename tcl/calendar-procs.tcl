@@ -1,58 +1,44 @@
-package require Tcl 8.5
-package require http
 package require sha256
 package require base64
+package require http 
 package require tls
 package require pki
 package require json
+package require json::write
+package require Tcl 8.5
 
-ad_library {
-
-    @author Alex Oh
-    @creation-date 2017-06-29
-}
+namespace eval ctrl_ce {}
 
 
-
-namespace eval ars::events {}
-
-ad_proc -public ctrl_ce::new { 
-    {-event_id:required}
-    {-title_id:required}
-    {-description_id:required}
-    {-start_date:required}
-    {-end_date:required}
+ad_proc -private ctrl_ce::save_events {
+    {-calendar:required}
 } {
-    Load the newly fetched data into db.
+    Parses the retrieved events and saves them into db.
 } {
-    set error_p 0
-    db_transaction { 
+    set calendar [json::json2dict $calendar]
+    set events [dict get $calendar "items"]
+
+    foreach item $events {
+        # If you want to get more info from each of the events, then                                                                                     
+	# look at the following documentation for it:
+        # https://developers.google.com/google-apps/calendar/v3/reference/events                                                                                             
+	set event_id [dict get $item "iCalUID"]
+	set title [dict get $item "summary"]
+	set decription [dict get $item "description"]
+	set start_date [dict get $item "start"]
+	set end_date [dict get $item "end"]
 	db_dml ce_new {} 
-    } on_error { 
-	set error_p 1
-	db_abort_transaction
     }
-    if $error_p { 
-	ad_return_complaint $error_p $errmsg
-	return 
-    }
-}
 
-ad_proc -public ctrl_ce::dump {
+    db_dml ce_dump {}
+} 
+
+ad_proc -private ctrl_ce::base64_url_encode {
+    {-input:required}
 } {
-    Remove all previous entries in the table.
+    Base 64 URL encoding scheme. 
 } {
-    set error_p 0
-    db_transaction {
-        db_dml ce_dump {}
-    } on_error {
-        set error_p 1
-        db_abort_transaction
-    }
-    if $error_p {
-        ad_return_complaint $error_p $errmsg
-        return
-    }
+    return [string map {\n "" "=" "" + - / _} [::base64::encode $input]]  
 }
 
 ad_proc -public ctrl_ce::make_access_token {
@@ -83,9 +69,7 @@ ad_proc -public ctrl_ce::make_access_token {
     close $fp
 
     set key [::pki::pkcs::parse_key $keydata]
-
     set sig [ctrl_ce::base64_url_encode -input [::pki::sign $signature $key sha256]]
-
     set final "$signature.$sig"
 
     set postdata [::http::formatQuery grant_type "urn:ietf:params:oauth:grant-type:jwt-bearer" assertion $final]
@@ -104,7 +88,7 @@ ad_proc -public ctrl_ce::make_access_token {
     return $access_token
 }
 
-ad_proc -public ctrl_ce::make_access_token_cache {
+ad_proc -private ctrl_ce::make_access_token_cache {
 } {
    Creating an access token for a "service to service" account -- cached 
 } {
@@ -112,15 +96,14 @@ ad_proc -public ctrl_ce::make_access_token_cache {
     return $token
 }
 
-
-ad_proc -public ctrl_ce::get_events {
+ad_proc -private ctrl_ce::fetch_events {
     {-calendar_id:required}
 } {
     After obtaining an access token to perform a "service to service" call, 
     use the access token to make an api call for retrieving calendar events.
 } {
 
-    set access_token ctrl_ce::make_access_token
+    set access_token [ctrl_ce::make_access_token]
     set auth "Authorization"
     set token "Bearer $access_token"
     set token_for_header [list "$auth" "$token"]
@@ -130,70 +113,79 @@ ad_proc -public ctrl_ce::get_events {
     # calendars/PRIMARY/events where primary decides which calendar you are looking at                                                                   
     set calendar [::http::data $request_calendar]
     ::http::cleanup $request_calendar
-    return [save_events $calendar]
+    return [ctrl_ce::save_events -calendar $calendar]
 }
 
-
-ad_proc -public ctrl_ce::get_events_cache {
+ad_proc -private ctrl_ce::fetch_events_cache {
     {-calendar_id:required}
 } {
     Wrapper for get_events
     Caches output of the calendar events for 15 minutes.
 } {
-    set events [util_memoize [list "ctrl_ce::get_events" $calendar_id] 900]
-    return $events
+    util_memoize [list "ctrl_ce::fetch_events -calendar_id $calendar_id"] 900
 }
 
-ad_proc -public ars::events::nothing {
-} {
-} {
-    return "hello"
-}
 
-ad_proc -public ctrl_ce::get_events_from_db {
+ad_proc -public ctrl_ce::get_events {
 } {
     Just getting the stored information from db
 } {
-    return [db_list_of_lists ce_get {}]
+    ctrl_ce::fetch_events_cache -calendar_id "ctrlcalendar%40gmail.com"
+    return [db_list_of_lists ce_get_events {}]
 }
 
-ad_proc -public ctrl_ce::save_events {
-    {-calendar_id:required}
+ad_proc -public ctrl_ce::get_user_events {
+    {-user_id:required}
 } {
-    Parses the retrieved events and saves them into db.
+   Get the event IDs associated with a user ID.
+    This does not get the event table. 
 } {
-    set calendar [json::json2dict $calendar]
-    set events [dict get $calendar "items"]
-    set retVal_events ""
-    foreach item $events {
+    return [db_list ce_get_user_events {}]
+}
 
-                         # If you want to get more info from each of the events, then                                                                                     
-			 # look at the following documentation for it:
-                         # https://developers.google.com/google-apps/calendar/v3/reference/events                                                                                             
-        set currVal [::json::write object \
-                         title "\"[dict get $item "summary"]\"" \
-                         description "\"[dict get $item "description"]\"" \
-                         startTime "\"[dict get $item "start"]\"" \
-                         endTime "\"[dict get $item "end"]\""
-		     id "\"[dict get $item "iCalUID"]\"" ]
+ad_proc -public ctrl_ce::modify_user_events {
+    {-user_id: required}
+    {-selected_events: required}
+    {-events: required}
+} {
+    Modifies the user events
+} {
+    lassign [build_insert_and_delete_lists $selected_events $events] \
+        events_inserts \
+        events_deletes
 
-        lappend retVal_events $currVal "<break>"
+	db_dml ce_delete_user_events {}
+        foreach new_events_id $events_inserts {
+	    db_dml ce_insert_user_events {}
+	}    
+}
+
+proc build_insert_and_delete_lists {old_ids new_ids} {
+    set insert [list]
+    set delete [list]
+
+    foreach old_id $old_ids {
+            set old($old_id) 1
     }
 
-    # Can't have any new lines or else javascript doesnt parse it correctly.                                                                                                                  
-    set removeNewLine [regsub -all "\n" $retVal_events ""]
+    foreach new_id $new_ids {
+            set new($new_id) 1
+    }
 
-    # Can't have any double opening and closing braces. Does not fit the json format.                                                                                                         
-    set removeLeftBrace [regsub -all {\{\{} $removeNewLine "\{"]
-    set removeRightBrace [regsub -all {\}\}} $removeLeftBrace "\}"]
+    foreach new_id $new_ids {
+	if {![info exists old($new_id)]} {
+                lappend insert $new_id
+	}
+    }
 
-    return $removeRightBrace
-} 
+    foreach old_id $old_ids {
+	if {![info exists new($old_id)]} {
+                lappend delete $old_id
+	}
+    }
 
-ad_proc -public ctrl_ce::base64_url_encode {
-    {-input:required}
-} {
-    Base 64 URL encoding scheme. 
-} {
-    return [string map {\n "" "=" "" + - / _} [::base64::encode $input]]  
+    return [list $insert $delete]
 }
+
+
+
