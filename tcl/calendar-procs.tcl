@@ -1,6 +1,17 @@
+#package require sha256
+#package require base64
+#package require pki
+#package require json
+#package require json::write
+#package reuquire Tcl 8.5
+#package require http 
+#package require http 2.7
+#package require tls
+
+
 package require sha256
 package require base64
-package require http 
+package require http
 package require tls
 package require pki
 package require json
@@ -8,7 +19,6 @@ package require json::write
 package require Tcl 8.5
 
 namespace eval ctrl_ce {}
-
 
 ad_proc -private ctrl_ce::save_events {
     {-calendar:required}
@@ -70,6 +80,7 @@ ad_proc -public ctrl_ce::make_access_token {
 
     set key [::pki::pkcs::parse_key $keydata]
     set sig [ctrl_ce::base64_url_encode -input [::pki::sign $signature $key sha256]]
+
     set final "$signature.$sig"
 
     set postdata [::http::formatQuery grant_type "urn:ietf:params:oauth:grant-type:jwt-bearer" assertion $final]
@@ -77,7 +88,6 @@ ad_proc -public ctrl_ce::make_access_token {
     # Must initialize the tls before using ::http::geturl
     # tls::init -tls1 true -ssl2 false -ssl3 false
     
-    ::http::register https 443 ::tls::socket
     set fp [::http::geturl "https://accounts.google.com/o/oauth2/token" -query $postdata]
     set status [::http::status $fp]
     set ncode [::http::ncode $fp]
@@ -92,8 +102,7 @@ ad_proc -private ctrl_ce::make_access_token_cache {
 } {
    Creating an access token for a "service to service" account -- cached 
 } {
-    set token [util_memoize  "ctrl_ce::make_access_token" 3600]
-    return $token
+    return [util_memoize  "ctrl_ce::make_access_token" 3600]
 }
 
 ad_proc -private ctrl_ce::fetch_events {
@@ -123,6 +132,14 @@ ad_proc -private ctrl_ce::fetch_events_cache {
     Caches output of the calendar events for 15 minutes.
 } {
     util_memoize [list "ctrl_ce::fetch_events -calendar_id $calendar_id"] 900
+}
+
+
+ad_proc -public ctrl_ce::nothing {
+} {
+    Just getting the stored information from db
+} {
+    doc_return 200 text/html "hellooooo"
 }
 
 
