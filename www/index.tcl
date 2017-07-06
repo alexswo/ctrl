@@ -1,81 +1,34 @@
-package require sha256
-package require base64
-package require http
-package require tls
-package require pki
 package require json
-package require json::write
 
-proc base64_url_encode {input} {
-    return [string map {\n "" "=" "" + - / _} [::base64::encode $input]]
-}
+#ctrl_ce::get_events -calendar_id "hey"
 
-# Access token only lasts for 60 minutes. 
-proc make_access_token {} {
+set firstBody "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=eyJhbGciOiAiUlMyNTYiLCAgInR5cCI6ICJKV1QifQ.eyJpc3MiOiAicHJpbWFyeUBzdG9uZS1hcmNoLTE2NzgxOC5pYW0uZ3NlcnZpY2VhY2NvdW50LmNvbSIsICAic2NvcGUiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vYXV0aC9jYWxlbmRhciIsICAiYXVkIjogImh0dHBzOi8vYWNjb3VudHMuZ29vZ2xlLmNvbS9vL29hdXRoMi90b2tlbiIsICAiZXhwIjogIjE0OTkzODEwNzgiLCAgImlhdCI6ICIxNDk5Mzc3NDc4IiB9.iJaEsQugKtKimOcQojM7plScw7rJ1OMy-hfNOH3eXPVBgidMjDSkVwM5okK8xbEt8ms1GH7x1G2SaT04zmXLl9bkyK3uIT52vkpvoWHjhfbYyhOh09rcwXa8CTSoHzC5hC43BYZ8QPEHOqWHBJkWLrQm-vmVhaKgbtWcCaOW18I3VKkywV7-QNQ4excmYdy3_LmJsIkdGT2zMRkEvP6pt20hN43yXzUxCodZy5b62_nA_eojN6ZfDp_HQFEZKHkab5RZluGpf8hNIR6xn-ycZJUxe4Epx8_mSRqV6B1_l4kDK6QDoO7-hunVOj7ywqO60j6EqH7bUSO_l7gVVJ_Q0w"
 
-    set header "\{\"alg\": \"RS256\",  \"typ\": \"JWT\"\}"
-    set header [base64_url_encode $header]
+set result [util::http::post -url "https://accounts.google.com/o/oauth2/token" -body $firstBody]
+set json_part [lindex $result 3]
+set pretty_json [::json::json2dict $json_part]
+set access_token [dict get $pretty_json "access_token"]
+#doc_return 200 text/json "$json_part\n$access_token"
 
-    set claims "\{\"iss\": \"primary@stone-arch-167818.iam.gserviceaccount.com\", \
-	\"scope\": \"https://www.googleapis.com/auth/calendar\", \
-	\"aud\": \"https://www.googleapis.com/oauth2/v4/token\", \
-	\"exp\": \"[expr {[clock seconds] + 3600}]\", \
-	\"iat\": \"[clock seconds]\" \}"
 
-    set claims [base64_url_encode $claims]
 
-    set signature "$header.$claims"
+set myset [ns_set create myset "Authorization" "Bearer ya29.Elh_BC-D0VSVFYU4Wvi34dfNBIFovrYQRMKdWYTFKxqPwc6nq9nx97Ie9jxg64NrD3Fqd7VSD7M9rOGk7_pkRFigKnaq6Xtl01kldAePJc7nbCEwDveyq9kr"]
 
-    set fp [open "/web/dev/nnab-codebook/packages/ctrl-ars/keys/privatekey.pem" r]
-    set keydata [read $fp]
-    close $fp
+set events_unformatted [util::http::get -url "https://www.googleapis.com/calendar/v3/calendars/ctrlcalendar%40gmail.com/events" -headers $myset]
 
-    set key [::pki::pkcs::parse_key $keydata]
-    set sig [base64_url_encode [::pki::sign $signature $key sha256]]
-    set final "$signature.$sig"
+set events_formatted "[lindex $events_unformatted 3]"
+#set temp [json::json2dict $events_formatted]
 
-    set status [catch {exec /web/dev/nnab-codebook/packages/ctrl-ars/www/get_token.sh $final} access_token_unformatted]
-
-    if {$status == 0} {
-    puts "script exited normally (exit status 0) and wrote nothing to stderr"
-    } elseif {$::errorCode eq "NONE"} {
-    puts "script exited normally (exit status 0) but wrote something to stderr which is in $access_token_unformatted"
-    } elseif {[lindex $::errorCode 0] eq "CHILDSTATUS"} {
-	puts "script exited with status [lindex $::errorCode end]."
-    }
-
-    set access_token_formatted "\{[lindex $access_token_unformatted 0]\}"
-    set access_token [dict get [json::json2dict $access_token_formatted] "access_token"]
-    return $access_token
-}
-
-proc get_events {calendar_id} {
-    set access_token [make_access_token]
-    set status [catch {exec /web/dev/nnab-codebook/packages/ctrl-ars/www/get_events.sh $access_token} events_unformatted]
-
-    if {$status == 0} {
-	puts "script exited normally (exit status 0) and wrote nothing to stderr"
-    } elseif {$::errorCode eq "NONE"} {
-	puts "script exited normally (exit status 0) but wrote something to stderr which is in $events_unformatted"
-    } elseif {[lindex $::errorCode 0] eq "CHILDSTATUS"} {
-        puts "script exited with status [lindex $::errorCode end]."
-    }
-    
-    set events_formatted "\{[lindex $events_unformatted 0]\}"
-    set events [dict get [json::json2dict $events_formatted] "items"]
-    save_events $events
-}
-
-proc save_events {events} {
+set events [dict get [json::json2dict $events_formatted] "items"]
 
     set retVal_events ""
-    foreach item $events {
+foreach item $events {
                          # If you want to get more info from each of the events, then
                          # look at the following documentation for it:                                                           
                          # https://developers.google.com/google-apps/calendar/v3/reference/events                                                                                        
 
-	lappend retVal_events [dict get $item "summary"]
-	if 0 {
+    lappend retVal_events [dict get $item "summary"]
+    if 0 {
 	set currVal [::json::write object \
 			 title "\"[dict get $item "summary"]\"" \
 			 description "\"[dict get $item "description"]\"" \
@@ -83,11 +36,7 @@ proc save_events {events} {
 			 endTime "\"[dict get $item "end"]\""
 		     id "\"[dict get $item "iCalUID"]\"" ] 
 
-	lappend retVal_events $currVal "<break>"
-	}
-    }	
-
+	    lappend retVal_events $currVal "<break>"
+    }
+}	
     doc_return 200 text/html $retVal_events 
-}
-
-set calendar_events [get_events "ctrlcalendar%40gmail.com"]
