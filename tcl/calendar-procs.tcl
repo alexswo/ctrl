@@ -25,7 +25,7 @@ ad_proc -private ctrl_ce::make_access_token {
 
     set claims "\{\"iss\": \"primary@stone-arch-167818.iam.gserviceaccount.com\", \
 \"scope\": \"https://www.googleapis.com/auth/calendar\", \
-\"aud\": \"https://www.googleapis.com/oauth2/v4/token\", \
+\"aud\": \"https://accounts.google.com/o/oauth2/token\", \
 \"exp\": \"[expr {[clock seconds] + 3600}]\", \
 \"iat\": \"[clock seconds]\" \}"
 
@@ -40,19 +40,17 @@ ad_proc -private ctrl_ce::make_access_token {
     set key [::pki::pkcs::parse_key $keydata]
     set sig [ctrl_ce::base64_url_encode -input [::pki::sign $signature $key sha256]]
     set final "$signature.$sig"
+    
 
-    set status [catch {exec /web/dev/nnab-codebook/packages/ctrl-ars/tcl/get_token.sh $final} access_token_unformatted]
+    
+    set http_body "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion="
+    append http_body $final
 
-    if {$status == 0} {
-    puts "script exited normally (exit status 0) and wrote nothing to stderr"
-    } elseif {$::errorCode eq "NONE"} {
-    puts "script exited normally (exit status 0) but wrote something to stderr which is in $access_token_unformatted"
-    } elseif {[lindex $::errorCode 0] eq "CHILDSTATUS"} {
-	puts "script exited with status [lindex $::errorCode end]."
-    }
+    set result [util::http::post -url "https://accounts.google.com/o/oauth2/token" -body $http_body]
+    set json_part [lindex $result 3]
+    set pretty_json [::json::json2dict $json_part]
+    set access_token [dict get $pretty_json "access_token"]
 
-    set access_token_formatted "\{[lindex $access_token_unformatted 0]\}"
-    set access_token [dict get [json::json2dict $access_token_formatted] "access_token"]
     return $access_token
 }
 
@@ -64,18 +62,12 @@ ad_proc -public ctrl_ce::get_events {
 } {
     # TODO: The calendar id has not been passed into the bash script yet. Please push it in after testing.                                                                                  
     set access_token [ctrl_ce::make_access_token]
-    set status [catch {exec /web/dev/nnab-codebook/packages/ctrl-ars/tcl/get_events.sh $access_token} events_unformatted]
 
-    if {$status == 0} {
-        puts "script exited normally (exit status 0) and wrote nothing to stderr"
-    } elseif {$::errorCode eq "NONE"} {
-        puts "script exited normally (exit status 0) but wrote something to stderr which is in $events_unformatted"
-    } elseif {[lindex $::errorCode 0] eq "CHILDSTATUS"} {
-        puts "script exited with status [lindex $::errorCode end]."
-    }
-
-    set events_formatted "\{[lindex $events_unformatted 0]\}"
+    set myset [ns_set create myset "Authorization" "Bearer $access_token"]
+    set events_unformatted [util::http::get -url "https://www.googleapis.com/calendar/v3/calendars/ctrlcalendar%40gmail.com/events" -headers $myset]
+    set events_formatted "[lindex $events_unformatted 3]"
     set events [dict get [json::json2dict $events_formatted] "items"]
+
     ctrl_ce::save_events -events $events
 }
 
